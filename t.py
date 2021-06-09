@@ -98,7 +98,7 @@ def send_to_port(port, counter_identifier, cmd, cmd_print):
     cmd - должен быть без crc на конце. Функция сама его подставит
     """
 
-    #cmd_print = False
+    cmd_print = False
 
     port.flushInput()
     port.flushOutput()
@@ -337,6 +337,8 @@ def read_power_profile(port, counter_identifier, pointer, date, divide):
         if data.find(f'23{date}') != -1:
             fl = True
 
+    #print(data)
+
     # Если успешно нашли 24-и пары получасовок
     if fl:
         for i in range(0, 24):
@@ -344,6 +346,15 @@ def read_power_profile(port, counter_identifier, pointer, date, divide):
                 h = f'{i}{date}'
             else:
                 h = f'0{i}{date}'
+
+
+            # Сложно рассказать зачем это )
+            repeat_count = data.count(h)
+            if data.count(h) > 1:
+                s = ''
+                for j in range(repeat_count):
+                    s += h
+                h = s
 
             l = data.split(h)
 
@@ -353,11 +364,9 @@ def read_power_profile(port, counter_identifier, pointer, date, divide):
 
             hh1 = hh[0:16]
             hh2 = hh[16:32]
-            #print(f'    |{hh1}| - |{hh2}|')
 
             item1 = create_power_profile_item(hh1, date, divide)
             item2 = create_power_profile_item(hh2, date, divide)
-            #print(f'    {item1.a_plus} - {item2.a_plus}')
 
             result.append(item1)
             result.append(item2)
@@ -395,7 +404,7 @@ if online:
             tc = read_transformation_coefficient(port, counter_identifier)
             print(tc)
 
-            divide = 1250
+            divide = 1250 # Делитель в зависимости от модели счётчика
             ppl = read_power_profile(port, counter_identifier, pointer, date, divide)
 
             for item in ppl:
