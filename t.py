@@ -12,8 +12,8 @@ class PowerProfileItem:
     def __init__(self):
         self.a_plus = 0.0  # A+ кВт
         self.a_minus = 0.0  # A- кВт
-        self.r_plus = 0.0  # R+ кВт
-        self.r_minus = 0.0  # R- кВт
+        self.r_plus = 0.0  # R+ квар
+        self.r_minus = 0.0  # R- квар
         self.date_param = ''  # Дата снятия (ддммгг)
         self.doubleTimeParam = ':-:'  # Временной промежуток снятия (21:00-21:30 ...)
 
@@ -51,6 +51,58 @@ def validate_strhex(s):
 
     if len(s) == 1:
         result = f'000{s[0]}'
+
+    return result
+
+
+def half_hour_time():
+    """
+    :return: Возвращает список получасовых промежутков (00:00 - 00:30, 00:30 - 01:00 ... 23:30 - 24:00)
+    """
+
+    def add_zero(s):
+        result = s
+        if len(result) == 1:
+            result = '0' + result
+
+        return result
+
+    result = list()
+
+    itemsList = [i for i in range(0, 48)]
+
+    l1 = 0
+    lFl = True
+    l2 = 0
+
+    r1 = 0
+    rFl = True
+    r2 = 30
+    for i in range(len(itemsList)):
+        l1s = add_zero(str(l1))
+        l2s = add_zero(str(l2))
+        r1s = add_zero(str(r1))
+        r2s = add_zero(str(r2))
+
+        s = l1s + ':' + l2s + ' - ' + r1s + ':' + r2s
+        result.append(s)
+
+        if rFl:
+            r1 += 1
+            r2 = 0
+            rFl = False
+        else:
+            r2 = 30
+            rFl = True
+
+        if lFl:
+            l1 = r1 - 1
+            l2 = 30
+            lFl = False
+        else:
+            l1 = r1
+            l2 = 0
+            lFl = True
 
     return result
 
@@ -371,6 +423,11 @@ def read_power_profile(port, counter_identifier, pointer, date, divide):
             result.append(item1)
             result.append(item2)
 
+        hht = half_hour_time()
+
+        for i in range(0, 48):
+            result[i].doubleTimeParam = hht[i]
+
     return result
 
 
@@ -395,7 +452,7 @@ if online:
     if channel:
         print(f'Счётчик {counter_identifier} канал открыт')
 
-        date = '190521'
+        date = '050621'
 
         pointer = read_power_profile_pointer_on_date(port, counter_identifier, date)
         print(f'{pointer} -- указатель на дату {date}')
@@ -408,7 +465,7 @@ if online:
             ppl = read_power_profile(port, counter_identifier, pointer, date, divide)
 
             for item in ppl:
-                print(f'{item.a_plus} - {item.a_minus} - {item.r_plus} - {item.r_minus}')
+                print(f'{item.date_param} {item.doubleTimeParam} {item.a_plus} - {item.a_minus} - {item.r_plus} - {item.r_minus}')
 
 
         channel = close_channel(port, counter_identifier)
