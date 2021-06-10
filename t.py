@@ -1,10 +1,7 @@
-#import psch
 import serial
 import libscrc
 from datetime import date, datetime, timedelta
-from time import sleep
 import csv
-
 
 
 class PowerProfileItem:
@@ -18,6 +15,7 @@ class PowerProfileItem:
         self.r_minus = 0.0  # R- квар
         self.date_param = ''  # Дата снятия (ддммгг)
         self.time_param = ':-:'  # Временной промежуток снятия (21:00-21:30 ...)
+        self.date_time = datetime.now() # Дата время для построения графика, время будет из второй части получасовки
 
 
 def str_to_hex(s):
@@ -33,8 +31,7 @@ def int_to_hex_str(i):
     1 dec -> 01 hex, 20 dec -> 14 hex
     """
 
-    #return '{:x}'.format(i)
-    return (f'{i:0>2X}')
+    return f'{i:0>2X}'
 
 
 def validate_strhex(s):
@@ -48,7 +45,6 @@ def validate_strhex(s):
         result = f'0{s}'
 
     if len(s) == 2:
-        #result = f'0{s[0]}0{s[1]}'
         result = f'00{s}'
 
     if len(s) == 1:
@@ -59,52 +55,56 @@ def validate_strhex(s):
 
 def half_hour_time():
     """
-    :return: Возвращает список получасовых промежутков (00:00 - 00:30, 00:30 - 01:00 ... 23:30 - 24:00)
+    :return: Возвращает список получасовых промежутков (00:00 - 00:30, 00:30 - 01:00 ... 23:30 - 23:59)
     """
 
-    def add_zero(s):
-        result = s
-        if len(result) == 1:
-            result = '0' + result
+    def add_zero(s_):
+        result_ = s_
+        if len(result_) == 1:
+            result_ = '0' + result_
 
-        return result
+        return result_
 
     result = list()
 
-    itemsList = [i for i in range(0, 48)]
+    items_list = [i for i in range(0, 48)]
 
     l1 = 0
-    lFl = True
+    l_fl = True
     l2 = 0
 
     r1 = 0
-    rFl = True
+    r_fl = True
     r2 = 30
-    for i in range(len(itemsList)):
+    for i in range(len(items_list)):
         l1s = add_zero(str(l1))
         l2s = add_zero(str(l2))
         r1s = add_zero(str(r1))
         r2s = add_zero(str(r2))
 
+        if i == 47:
+            r1s = '23'
+            r2s = '59'
+
         s = l1s + ':' + l2s + '-' + r1s + ':' + r2s
         result.append(s)
 
-        if rFl:
+        if r_fl:
             r1 += 1
             r2 = 0
-            rFl = False
+            r_fl = False
         else:
             r2 = 30
-            rFl = True
+            r_fl = True
 
-        if lFl:
+        if l_fl:
             l1 = r1 - 1
             l2 = 30
-            lFl = False
+            l_fl = False
         else:
             l1 = r1
             l2 = 0
-            lFl = True
+            l_fl = True
 
     return result
 
@@ -120,13 +120,44 @@ def get_crc(s):
 
     tx = str_to_hex(s)
     crc16 = libscrc.modbus(tx)
-    sHex = str(hex(crc16))
+    s_hex = str(hex(crc16))
 
-    if len(sHex) == 6:
-        result = sHex[4] + sHex[5] + sHex[2] + sHex[3]
+    if len(s_hex) == 6:
+        result = f'{s_hex[4]}{s_hex[5]}{s_hex[2]}{s_hex[3]}'
 
-    if len(sHex) == 5:
-        result = f'{sHex[3]}{sHex[4]}0{sHex[2]}'
+    if len(s_hex) == 5:
+        result = f'{s_hex[3]}{s_hex[4]}0{s_hex[2]}'
+
+    return result
+
+
+def make_true_date(s_date):
+    try:
+        result = datetime.strptime(s_date, '%d%m%y')
+        #result = f'{str(result)[0:4]}.{str(result)[5:7]}.{str(result)[8:10]}'
+        result = f'{str(result)[0:10]}'
+    except:
+        result = s_date
+
+    return result
+
+
+def make_true_date_time(s_date, s_time):
+    """
+    Для БД или графиков
+
+    s_date: ддммгг (180221)
+    s_time: чч:мм-чч:мм (01:00-01:30)
+
+    return гггг-мм-дд чч:мм (2021-02-18 01:30:00) (берётся второе время получасовки)
+    """
+
+    dt = f'{s_date} {s_time[6:11]}'
+
+    try:
+        result = datetime.strptime(dt, '%d%m%y %H:%M')
+    except:
+        result = datetime.now()
 
     return result
 
@@ -145,7 +176,7 @@ def prepare_command(cmd):
     return result
 
 
-def send_to_port(port, counter_identifier, cmd, cmd_print):
+def send_to_port(port_, counter_identifier_, cmd, cmd_print):
     """
     Посылает запрос в com-порт.
 
@@ -154,26 +185,26 @@ def send_to_port(port, counter_identifier, cmd, cmd_print):
 
     cmd_print = False
 
-    port.flushInput()
-    port.flushOutput()
+    port_.flushInput()
+    port_.flushOutput()
 
-    cmd = prepare_command(f'{int_to_hex_str(counter_identifier)}{cmd}')
+    cmd = prepare_command(f'{int_to_hex_str(counter_identifier_)}{cmd}')
 
-    hexCmd = str_to_hex(cmd)
+    hex_cmd = str_to_hex(cmd)
 
     if cmd_print:
-        print(f'TX    {hexCmd.hex()}')
+        print(f'TX    {hex_cmd.hex()}')
 
-    port.write(hexCmd)
+    port_.write(hex_cmd)
 
     result = b''
 
-    endTime = datetime.now() + timedelta(seconds=port.timeout)
+    end_time = datetime.now() + timedelta(seconds=port_.timeout)
 
     while True:
-        result += port.read(port.inWaiting())
+        result += port_.read(port.inWaiting())
 
-        if datetime.now() > endTime:
+        if datetime.now() > end_time:
             break
     if cmd_print:
         print(f'RX    {result.hex()}')
@@ -182,7 +213,7 @@ def send_to_port(port, counter_identifier, cmd, cmd_print):
     return result.hex()
 
 
-def test_counter(port, counter_identifier):
+def test_counter(port_, counter_identifier_):
     """
     Проверка, доступен ли счётчик
     """
@@ -191,28 +222,28 @@ def test_counter(port, counter_identifier):
     cmd = f'00'
 
     try:
-        r = send_to_port(port, counter_identifier, cmd, True)
+        r = send_to_port(port_, counter_identifier_, cmd, True)
         if len(r) > 0:
             result = True
     except:
-        result = None
+        pass
 
     return result
 
 
-def open_channel(port, counter_identifier, counter_password):
+def open_channel(port_, counter_identifier_, counter_password):
     """
     Открытие канала связи со счётчиком
     """
 
     result = False
 
-    hexPassword = counter_password.encode().hex()
+    hex_password = counter_password.encode().hex()
 
-    cmd = f'01{hexPassword}'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    cmd = f'01{hex_password}'
+    r = send_to_port(port_, counter_identifier_, cmd, True)
 
-    etalon_ansver = str_to_hex(prepare_command(f'{int_to_hex_str(counter_identifier)}00')).hex()
+    etalon_ansver = str_to_hex(prepare_command(f'{int_to_hex_str(counter_identifier_)}00')).hex()
 
     if len(r) != 0:
         if etalon_ansver == r:
@@ -221,7 +252,7 @@ def open_channel(port, counter_identifier, counter_password):
     return result
 
 
-def close_channel(port, counter_identifier):
+def close_channel(port_, counter_identifier_):
     """
     Открытие канала связи со счётчиком
     """
@@ -229,9 +260,9 @@ def close_channel(port, counter_identifier):
     result = False
 
     cmd = f'02'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    r = send_to_port(port_, counter_identifier_, cmd, True)
 
-    etalon_ansver = str_to_hex(prepare_command(f'{int_to_hex_str(counter_identifier)}00')).hex()
+    etalon_ansver = str_to_hex(prepare_command(f'{int_to_hex_str(counter_identifier_)}00')).hex()
 
     if len(r) != 0:
         if etalon_ansver == r:
@@ -240,52 +271,50 @@ def close_channel(port, counter_identifier):
     return result
 
 
-def read_power_profile_pointer_on_date(port, counter_identifier, date):
+def read_power_profile_pointer_on_date(port_, counter_identifier_, date_):
     """
     Поиск первого (или единственного) указателя базового массива профиля мощности
     на заданную дату
     """
 
     cmd = f'0803'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    send_to_port(port_, counter_identifier_, cmd, True)
 
     cmd = f'0809'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    send_to_port(port_, counter_identifier_, cmd, True)
 
     cmd = f'0806'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    send_to_port(port_, counter_identifier_, cmd, True)
 
     cmd = f'0804'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    send_to_port(port_, counter_identifier_, cmd, True)
 
-    cmd = f'032800FFFFFF{date}FF1E'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    cmd = f'032800FFFFFF{date_}FF1E'
+    send_to_port(port_, counter_identifier_, cmd, True)
 
     # Найти указатель базаового массива профиля мощности на начало искомой даты
-    #cmd = f'081800'
-    #r = send_to_port(port, counter_identifier, cmd, True)
-
+    r = ''
     p = '1'
     while p != '0':
         cmd = f'081800'
-        r = send_to_port(port, counter_identifier, cmd, True)
+        r = send_to_port(port_, counter_identifier_, cmd, True)
         p = r[3]
 
-    r = r[8] + r[9] + r[10] + r[11]
+    r = f'{r[8]}{r[9]}{r[10]}{r[11]}'
 
     return r
 
 
-def read_7bit_header(port, counter_identifier, date, pointer):
+def read_7bit_header(port_, counter_identifier_, date_, pointer_):
     """
     Прочитать 7 байт информации (заголовок профиля) из памяти № 03h c адреса "pointer"
     """
     result = True
 
-    cmd = f'0603{pointer}07'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    cmd = f'0603{pointer_}07'
+    r = send_to_port(port_, counter_identifier_, cmd, True)
 
-    part = f'00{date}011E'
+    part = f'00{date_}011E'
 
     if r.find(part) != -1:
         result = False
@@ -293,7 +322,7 @@ def read_7bit_header(port, counter_identifier, date, pointer):
     return result
 
 
-def read_transformation_coefficient(port, counter_identifier):
+def read_transformation_coefficient(port_, counter_identifier_):
     """
     Прочитать установленные коэффициенты трансформации счетчика
     """
@@ -307,7 +336,7 @@ def read_transformation_coefficient(port, counter_identifier):
     }
 
     cmd = f'0802'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    r = send_to_port(port_, counter_identifier_, cmd, True)
 
     if len(r) == 26:
         result['kn'] = int(f'{r[2]}{r[3]}{r[4]}{r[5]}', 16)
@@ -319,65 +348,49 @@ def read_transformation_coefficient(port, counter_identifier):
     return result
 
 
-def read_power_profile_line(port, counter_identifier, index, pointer):
+def read_power_profile_line(port_, counter_identifier_, index_, pointer_):
     """
     Прочитать первую или очередную строку с данными профиля мощности
 
-    index не должен быть равным 0 (проблемы CRC). Только 1 -> 255
+    index_ не должен быть равным 0 (проблемы CRC). Только 1 -> 255
     """
 
     ma = '03'  # № адреса памяти
     bytes_count = '82'  # Количество байт для считывания (82 в проприетарной утилите)
 
-    cmd = f'0C{index}{ma}{pointer}{bytes_count}'
-    r = send_to_port(port, counter_identifier, cmd, True)
+    cmd = f'0C{index_}{ma}{pointer_}{bytes_count}'
+    r = send_to_port(port_, counter_identifier_, cmd, True)
 
     # Отсекаем номер счётчика и индекс, отсекаем CRC
     return r[4:-4]
 
 
-def prepare_power_profile_item(ppi1, ppi2, hhx, divide):
+def prepare_power_profile_item(ppi1, ppi2, hhx, divide_, transform_):
     """
     Парсим данные получасовки, и возвращаем её в виде класса PowerProfileItem()
     """
 
     if len(hhx) == 32:
-        ppi1.a_plus = int(hhx[0:4], 16) / divide
-        ppi1.a_minus = int(hhx[4:8], 16) / divide
-        ppi1.r_plus = int(hhx[8:12], 16) / divide
-        ppi1.r_minus = int(hhx[12:16], 16) / divide
+        ppi1.a_plus = round((int(hhx[0:4], 16) / divide_) * transform_, 2)
+        ppi1.a_minus = round((int(hhx[4:8], 16) / divide_) * transform_, 2)
+        ppi1.r_plus = round((int(hhx[8:12], 16) / divide_) * transform_, 2)
+        ppi1.r_minus = round((int(hhx[12:16], 16) / divide_) * transform_, 2)
 
-        ppi2.a_plus = int(hhx[16:20], 16) / divide
-        ppi2.a_minus = int(hhx[20:24], 16) / divide
-        ppi2.r_plus = int(hhx[24:28], 16) / divide
-        ppi2.r_minus = int(hhx[28:32], 16) / divide
+        ppi2.a_plus = round((int(hhx[16:20], 16) / divide_) * transform_, 2)
+        ppi2.a_minus = round((int(hhx[20:24], 16) / divide_) * transform_, 2)
+        ppi2.r_plus = round((int(hhx[24:28], 16) / divide_) * transform_, 2)
+        ppi2.r_minus = round((int(hhx[28:32], 16) / divide_) * transform_, 2)
 
-"""
-def prepare_power_profile_item(hhx, date, divide):
-    "Парсим данные получасовки, и возвращаем её в виде класса PowerProfileItem()"
 
-    ppi = PowerProfileItem()
-
-    if len(hhx) == 16:
-        ppi.a_plus = int(hhx[0:4], 16) / divide
-        ppi.a_minus = int(hhx[4:8], 16) / divide
-        ppi.r_plus = int(hhx[8:12], 16) / divide
-        ppi.r_minus = int(hhx[12:16], 16) / divide
-        ppi.date_param = date
-    else:
-        "место для лога"
-        #print(f'{hhx} -- Не удалось получить данные')
-
-    return ppi
-"""
-
-def read_power_profile(port, counter_identifier, pointer, date_, divide):
+def read_power_profile(port_, counter_identifier_, pointer_, date_, divide_, transform_):
     """
     Прочитать все строки профиля мощности на дату
     pointer -  значение из функции read_power_profile_pointer_on_date()
     """
 
-    pointer = validate_strhex(pointer)
+    print(f'Чтение профиля мощности за {make_true_date(date_)}')
+
+    pointer_ = validate_strhex(pointer_)
 
     result = []
 
@@ -392,15 +405,15 @@ def read_power_profile(port, counter_identifier, pointer, date_, divide):
     for i in range(1, 255):
         index = int_to_hex_str(i)
 
-        data += read_power_profile_line(port, counter_identifier, index, pointer)
+        data += read_power_profile_line(port_, counter_identifier_, index, pointer_)
 
-        dec_pointer = int(pointer, 16) + int(bytes_count, 16)
+        dec_pointer = int(pointer_, 16) + int(bytes_count, 16)
 
-        if dec_pointer < 65535:
-            pointer = int_to_hex_str(dec_pointer)
-            pointer = validate_strhex(pointer)
-        else:
-            pointer = '0000'
+        if dec_pointer < 65535:  # Пока не вышли за пределы адреса FFFFh
+            pointer_ = int_to_hex_str(dec_pointer)
+            pointer_ = validate_strhex(pointer_)
+        else:  # Обнуляем указатель
+            pointer_ = '0000'
 
         # Точно прерываем цикл, так уже на всякий случай получили лишнюю строку ответа
         if fl:
@@ -416,7 +429,6 @@ def read_power_profile(port, counter_identifier, pointer, date_, divide):
     if fl:
         hht = half_hour_time()
 
-        h = ''  # Идентификатор пары получасовок
         pos = 0  # Индекс данных в получасовках (для получения времени из hht)
 
         """
@@ -424,16 +436,21 @@ def read_power_profile(port, counter_identifier, pointer, date_, divide):
         И не беда, что данные будут не на все получасовки (такое случается из-за постоянного перезатирания данных)
         """
         for i in range(0, 24):
+            true_date = make_true_date(date_)
+
             item1 = PowerProfileItem()  # Первая получасовка часа
-            item1.date_param = date_
+            item1.date_param = true_date
             item1.time_param = hht[pos]
+            item1.date_time = make_true_date_time(date_, hht[pos])
             result.append(item1)
 
             item2 = PowerProfileItem()  # Вторая получасовка часа
-            item2.date_param = date_
-            item2.time_param = hht[pos +1]
+            item2.date_param = true_date
+            item2.time_param = hht[pos + 1]
+            item2.date_time = make_true_date_time(date_, hht[pos + 1])
             result.append(item2)
 
+            # Идентификатор пары получасовок
             if i > 9:
                 h = f'{i}{date_}'
             else:
@@ -445,17 +462,47 @@ def read_power_profile(port, counter_identifier, pointer, date_, divide):
                 hhx = l[1]
                 if len(hhx) > 39:
                     hhx = hhx[8:40]
-
-                    print(f'{hhx}')
-
-                    prepare_power_profile_item(item1, item2, hhx, divide)
+                    prepare_power_profile_item(item1, item2, hhx, divide_, transform_)
 
             pos += 2
 
     return result
 
 
+def get_prevmonth_power_profile(port_, counter_identifier_, divide_, transform_):
+    """
+    Получение профиля мощности за прошлый месяц от текущего
+    """
+
+    result = []  # Массив суточных массивов профилей мощности
+
+    # последний день предыдущего месяца
+    last_day_prev_month = date.today().replace(day=1) - timedelta(days=1)
+
+    # Первый день предыдущего месяца
+    first_day_prev_month = date.today().replace(day=1) - timedelta(days=last_day_prev_month.day)
+
+    d = first_day_prev_month
+    while d != last_day_prev_month + timedelta(days=1):
+        date_param = f'{str(d)[8:10]}{str(d)[5:7]}{str(d)[2:4]}'
+
+        pointer_ = read_power_profile_pointer_on_date(port_, counter_identifier_, date_param)
+
+        if read_7bit_header(port_, counter_identifier_, date_param, pointer_):
+            read_transformation_coefficient(port_, counter_identifier_)
+
+            day_data = read_power_profile(port_, counter_identifier_, pointer_, date_param, divide_, transform_)
+
+            result.append(day_data)
+
+        d += timedelta(days=1)
+
+    return result
+
+
+
 ########################################################################################################################
+
 
 port = serial.Serial(
     port='COM3',
@@ -467,6 +514,8 @@ port = serial.Serial(
     )
 
 counter_identifier = 104
+divide = 1250  # Делитель в зависимости от модели счётчика (ПСЧ-4ТМ.05МК)
+transform = 400  # Коэффициент трансформации (по хорошему его нужно прописывать в электросчётчике, а потом читать)
 
 online = test_counter(port, counter_identifier)
 if online:
@@ -476,22 +525,40 @@ if online:
     if channel:
         print(f'Счётчик {counter_identifier} канал открыт')
 
-        date = '160221'
+        """
+        # Профиль на дату
+        date_p = '160221'
 
-        pointer = read_power_profile_pointer_on_date(port, counter_identifier, date)
-        print(f'{pointer} -- указатель на дату {date}')
+        pointer = read_power_profile_pointer_on_date(port, counter_identifier, date_p)
+        print(f'{pointer} -- указатель на дату {date_p}')
 
-        if read_7bit_header(port, counter_identifier, date, pointer):
+        if read_7bit_header(port, counter_identifier, date_p, pointer):
             tc = read_transformation_coefficient(port, counter_identifier)
             print(tc)
-
-            divide = 1250 # Делитель в зависимости от модели счётчика (ПСЧ-4ТМ.05МК)
-            ppl = read_power_profile(port, counter_identifier, pointer, date, divide)
-
+            
+            ppl = read_power_profile(port, counter_identifier, pointer, date_p, divide, transform)
             for item in ppl:
-                print(f'{item.date_param} {item.time_param} | {item.a_plus} | {item.a_minus} | {item.r_plus} | {item.r_minus} |')
+                print(f'{item.date_time} |'
+                      f'{item.date_param} '
+                      f'{item.time_param} | '
+                      f'{item.a_plus} | '
+                      f'{item.a_minus} | '
+                      f'{item.r_plus} | '
+                      f'{item.r_minus} |')
+        """
 
+        # Профиль за предыдущий месяц
+        mont_data = get_prevmonth_power_profile(port, counter_identifier, divide, transform)
 
+        for day_item in mont_data:
+            for hour_item in day_item:
+                print(f'{hour_item.date_time} |'
+                      f'{hour_item.date_param} '
+                      f'{hour_item.time_param} | '
+                      f'{hour_item.a_plus} | '
+                      f'{hour_item.a_minus} | '
+                      f'{hour_item.r_plus} | '
+                      f'{hour_item.r_minus} |')
 
         channel = close_channel(port, counter_identifier)
 
