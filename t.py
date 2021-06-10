@@ -3,6 +3,8 @@ import serial
 import libscrc
 from datetime import date, datetime, timedelta
 from time import sleep
+import csv
+
 
 
 class PowerProfileItem:
@@ -15,7 +17,7 @@ class PowerProfileItem:
         self.r_plus = 0.0  # R+ квар
         self.r_minus = 0.0  # R- квар
         self.date_param = ''  # Дата снятия (ддммгг)
-        self.doubleTimeParam = ':-:'  # Временной промежуток снятия (21:00-21:30 ...)
+        self.time_param = ':-:'  # Временной промежуток снятия (21:00-21:30 ...)
 
 
 def str_to_hex(s):
@@ -84,7 +86,7 @@ def half_hour_time():
         r1s = add_zero(str(r1))
         r2s = add_zero(str(r2))
 
-        s = l1s + ':' + l2s + ' - ' + r1s + ':' + r2s
+        s = l1s + ':' + l2s + '-' + r1s + ':' + r2s
         result.append(s)
 
         if rFl:
@@ -334,7 +336,26 @@ def read_power_profile_line(port, counter_identifier, index, pointer):
     return r[4:-4]
 
 
-def create_power_profile_item(hhx, date, divide):
+def prepare_power_profile_item(ppi1, ppi2, hhx, divide):
+    """
+    Парсим данные получасовки, и возвращаем её в виде класса PowerProfileItem()
+    """
+
+    if len(hhx) == 32:
+        ppi1.a_plus = int(hhx[0:4], 16) / divide
+        ppi1.a_minus = int(hhx[4:8], 16) / divide
+        ppi1.r_plus = int(hhx[8:12], 16) / divide
+        ppi1.r_minus = int(hhx[12:16], 16) / divide
+
+        ppi2.a_plus = int(hhx[16:20], 16) / divide
+        ppi2.a_minus = int(hhx[20:24], 16) / divide
+        ppi2.r_plus = int(hhx[24:28], 16) / divide
+        ppi2.r_minus = int(hhx[28:32], 16) / divide
+
+"""
+def prepare_power_profile_item(hhx, date, divide):
+    "Парсим данные получасовки, и возвращаем её в виде класса PowerProfileItem()"
+
     ppi = PowerProfileItem()
 
     if len(hhx) == 16:
@@ -344,12 +365,13 @@ def create_power_profile_item(hhx, date, divide):
         ppi.r_minus = int(hhx[12:16], 16) / divide
         ppi.date_param = date
     else:
-        print(f'{hhx} -- Не удалось получить данные')
+        "место для лога"
+        #print(f'{hhx} -- Не удалось получить данные')
 
     return ppi
+"""
 
-
-def read_power_profile(port, counter_identifier, pointer, date, divide):
+def read_power_profile(port, counter_identifier, pointer, date_, divide):
     """
     Прочитать все строки профиля мощности на дату
     pointer -  значение из функции read_power_profile_pointer_on_date()
@@ -365,7 +387,8 @@ def read_power_profile(port, counter_identifier, pointer, date, divide):
 
     data = ''
 
-    # Циклично пытаемся найти
+    # Циклично пытаемся найти пары получкасовок
+    # Данных пар не обязательно должно быть 24 (по две на час)
     for i in range(1, 255):
         index = int_to_hex_str(i)
 
@@ -383,50 +406,51 @@ def read_power_profile(port, counter_identifier, pointer, date, divide):
         if fl:
             break
 
-        # Если нашли признак 24-й пары получасовок
+        # Если нашли идентификатор 24-й пары получасовок
         # то не выходим, а даём получить ещё строку ответа во избежание
-        # ситуации, когда признак находится в конце строки текущего ответа
-        if data.find(f'23{date}') != -1:
+        # ситуации, когда признак пары получасовок находится в конце строки текущего ответа
+        if data.find(f'23{date_}') != -1:
             fl = True
 
-    #print(data)
-
-    # Если успешно нашли 24-и пары получасовок
+    # Если успешно нашли 24-ю(последнюю) пару получасовок
     if fl:
+        hht = half_hour_time()
+
+        h = ''  # Идентификатор пары получасовок
+        pos = 0  # Индекс данных в получасовках (для получения времени из hht)
+
+        """
+        Результат всегда будет содержать 48 получасовок за сутки
+        И не беда, что данные будут не на все получасовки (такое случается из-за постоянного перезатирания данных)
+        """
         for i in range(0, 24):
+            item1 = PowerProfileItem()  # Первая получасовка часа
+            item1.date_param = date_
+            item1.time_param = hht[pos]
+            result.append(item1)
+
+            item2 = PowerProfileItem()  # Вторая получасовка часа
+            item2.date_param = date_
+            item2.time_param = hht[pos +1]
+            result.append(item2)
+
             if i > 9:
-                h = f'{i}{date}'
+                h = f'{i}{date_}'
             else:
-                h = f'0{i}{date}'
-
-
-            # Сложно рассказать зачем это )
-            repeat_count = data.count(h)
-            if data.count(h) > 1:
-                s = ''
-                for j in range(repeat_count):
-                    s += h
-                h = s
+                h = f'0{i}{date_}'
 
             l = data.split(h)
 
-            # Строка очищенная от "мусора", в ней данные двух получасовок к примеру
-            # 00:00->00:30 и 00:30->01:00
-            hh = l[1][8:40]
+            if len(l) > 1:
+                hhx = l[1]
+                if len(hhx) > 39:
+                    hhx = hhx[8:40]
 
-            hh1 = hh[0:16]
-            hh2 = hh[16:32]
+                    print(f'{hhx}')
 
-            item1 = create_power_profile_item(hh1, date, divide)
-            item2 = create_power_profile_item(hh2, date, divide)
+                    prepare_power_profile_item(item1, item2, hhx, divide)
 
-            result.append(item1)
-            result.append(item2)
-
-        hht = half_hour_time()
-
-        for i in range(0, 48):
-            result[i].doubleTimeParam = hht[i]
+            pos += 2
 
     return result
 
@@ -452,7 +476,7 @@ if online:
     if channel:
         print(f'Счётчик {counter_identifier} канал открыт')
 
-        date = '050621'
+        date = '160221'
 
         pointer = read_power_profile_pointer_on_date(port, counter_identifier, date)
         print(f'{pointer} -- указатель на дату {date}')
@@ -461,11 +485,12 @@ if online:
             tc = read_transformation_coefficient(port, counter_identifier)
             print(tc)
 
-            divide = 1250 # Делитель в зависимости от модели счётчика
+            divide = 1250 # Делитель в зависимости от модели счётчика (ПСЧ-4ТМ.05МК)
             ppl = read_power_profile(port, counter_identifier, pointer, date, divide)
 
             for item in ppl:
-                print(f'{item.date_param} {item.doubleTimeParam} {item.a_plus} - {item.a_minus} - {item.r_plus} - {item.r_minus}')
+                print(f'{item.date_param} {item.time_param} | {item.a_plus} | {item.a_minus} | {item.r_plus} | {item.r_minus} |')
+
 
 
         channel = close_channel(port, counter_identifier)
