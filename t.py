@@ -1,7 +1,7 @@
 import serial
 import libscrc
 from datetime import date, datetime, timedelta
-import csv
+import openpyxl
 
 
 class PowerProfileItem:
@@ -298,9 +298,13 @@ def read_power_profile_pointer_on_date(port_, counter_identifier_, date_):
     while p != '0':
         cmd = f'081800'
         r = send_to_port(port_, counter_identifier_, cmd, True)
-        p = r[3]
 
-    r = f'{r[8]}{r[9]}{r[10]}{r[11]}'
+        if len(r) > 10:  # Заглушка для ошибки (IndexError: string index out of range)
+            p = r[3]
+
+            r = f'{r[8]}{r[9]}{r[10]}{r[11]}'
+        else:
+            print('неведомая хуета')
 
     return r
 
@@ -384,7 +388,7 @@ def prepare_power_profile_item(ppi1, ppi2, hhx, divide_, transform_):
 
 def read_power_profile(port_, counter_identifier_, pointer_, date_, divide_, transform_):
     """
-    Прочитать все строки профиля мощности на дату
+    Прочитать все значения профиля мощности на дату date_
     pointer -  значение из функции read_power_profile_pointer_on_date()
     """
 
@@ -469,9 +473,31 @@ def read_power_profile(port_, counter_identifier_, pointer_, date_, divide_, tra
     return result
 
 
+def get_prevday_power_profile(port_, counter_identifier_, divide_, transform_):
+    """
+    Прочитать все значения профиля мощности на вчера
+    """
+
+    result = []
+
+    dtn = datetime.now()  # Текущий тайм стемп
+    ydtn = dtn - timedelta(days=1)  # Вчерашний таймстемп (нужна исключительно дата)
+
+    date_param = f'{str(ydtn)[8:10]}{str(ydtn)[5:7]}{str(ydtn)[2:4]}'  # Формат даты для посылки в электросчётчик
+
+    pointer_ = read_power_profile_pointer_on_date(port_, counter_identifier_, date_param)
+
+    if read_7bit_header(port_, counter_identifier_, date_param, pointer_):
+        read_transformation_coefficient(port, counter_identifier)
+
+        result = read_power_profile(port_, counter_identifier_, pointer_, date_param, divide_, transform_)
+
+    return result
+
+
 def get_prevmonth_power_profile(port_, counter_identifier_, divide_, transform_):
     """
-    Получение профиля мощности за прошлый месяц от текущего
+    Прочитать все значения профиля мощности за прошлый месяц
     """
 
     result = []  # Массив суточных массивов профилей мощности
@@ -493,12 +519,43 @@ def get_prevmonth_power_profile(port_, counter_identifier_, divide_, transform_)
 
             day_data = read_power_profile(port_, counter_identifier_, pointer_, date_param, divide_, transform_)
 
-            result.append(day_data)
+            result.extend(day_data)
 
         d += timedelta(days=1)
 
     return result
 
+
+def print_power_profile(power_profile_items_):
+    for item in power_profile_items_:
+        print(f'{item.date_time} |'
+              f'{item.date_param} '
+              f'{item.time_param} | '
+              f'{item.a_plus} | '
+              f'{item.a_minus} | '
+              f'{item.r_plus} | '
+              f'{item.r_minus} |')
+
+
+def power_profile_to_xlsx(power_profile_items_, template_xlsx_, result_xlsx_):
+    #x = f'{self.identifier}.xlsx'
+    #wb = openpyxl.load_workbook(filename='template.xlsx')
+    wb = openpyxl.load_workbook(filename=template_xlsx_)
+
+    # Обрабатываем вкладку "Профили нагрузки"
+    page2 = wb['Профили нагрузки']
+    page2['O1'] = ''  # Название устройства
+    page2['O2'] = ''  # Адрес объекта
+    page2['O3'] = ''  # Адрес устройства
+    page2['O4'] = ''  # Идентификатор устройства
+    page2['O5'] = ''  # Заводской номер
+    page2['AG1'] = datetime.now()
+
+    for i, item in enumerate(power_profile_items_, start=0):
+        page2[f"""A{i + 13}"""] = f'{item.date_param}  {item.time_param}'
+        page2[f"""J{i + 13}"""] = f'{str(item.a_plus)}'
+
+    wb.save(filename=result_xlsx_)
 
 
 ########################################################################################################################
@@ -514,8 +571,9 @@ port = serial.Serial(
     )
 
 counter_identifier = 104
-divide = 1250  # Делитель в зависимости от модели счётчика (ПСЧ-4ТМ.05МК)
-transform = 400  # Коэффициент трансформации (по хорошему его нужно прописывать в электросчётчике, а потом читать)
+divide = 1250  # Постоянные счетчиков в зависимости от типа и варианта исполнения (ПСЧ-4ТМ.05МК)
+#transform = 400  # Коэффициент трансформации (по хорошему его нужно прописывать в электросчётчике, а потом читать)
+transform = 1
 
 online = test_counter(port, counter_identifier)
 if online:
@@ -537,28 +595,26 @@ if online:
             print(tc)
             
             ppl = read_power_profile(port, counter_identifier, pointer, date_p, divide, transform)
-            for item in ppl:
-                print(f'{item.date_time} |'
-                      f'{item.date_param} '
-                      f'{item.time_param} | '
-                      f'{item.a_plus} | '
-                      f'{item.a_minus} | '
-                      f'{item.r_plus} | '
-                      f'{item.r_minus} |')
+            
+            print_power_profile(ppl)
+        """
+
+        """
+        # Профиль за предыдущие сутки
+        yesterday_items = get_prevday_power_profile(port, counter_identifier, divide, transform)
+
+        #print_power_profile(yesterday_items)
+
+        power_profile_to_xlsx(yesterday_items, 'template.xlsx', 'c:/temp/psch.xlsx')
         """
 
         # Профиль за предыдущий месяц
-        mont_data = get_prevmonth_power_profile(port, counter_identifier, divide, transform)
+        month_items = get_prevmonth_power_profile(port, counter_identifier, divide, transform)
+        
+        print_power_profile(month_items)
 
-        for day_item in mont_data:
-            for hour_item in day_item:
-                print(f'{hour_item.date_time} |'
-                      f'{hour_item.date_param} '
-                      f'{hour_item.time_param} | '
-                      f'{hour_item.a_plus} | '
-                      f'{hour_item.a_minus} | '
-                      f'{hour_item.r_plus} | '
-                      f'{hour_item.r_minus} |')
+        power_profile_to_xlsx(month_items, 'template.xlsx', 'c:/temp/psch.xlsx')
+
 
         channel = close_channel(port, counter_identifier)
 
