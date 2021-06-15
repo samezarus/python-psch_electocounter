@@ -3,6 +3,17 @@ import libscrc
 from datetime import date, datetime, timedelta
 import openpyxl
 import logging
+import pymysql
+import sys
+
+
+# Конфигурация модуля логов
+logger = logging.getLogger('psch2.py')
+logger.setLevel(logging.INFO)
+fh = logging.FileHandler('log.txt')
+formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] [%(name)s] [%(message)s]')
+fh.setFormatter(formatter)
+logger.addHandler(fh)
 
 
 def str_to_hex(s):
@@ -158,6 +169,40 @@ def make_true_date_time(s_date, s_time):
     return result
 
 
+def mysql_execute(db_connection, query, commit_flag, result_type):
+    """
+    Функция для выполнния любых типов запросов к MySQL
+    :dbCursor:   Указатель на курсор БД
+    :query:      Запрос к БД
+    :commitFlag: Делать ли коммит (True - Делать)
+    :resultType: Тип результата (one - первую строку результата, all - весь результат)
+    """
+
+    result = None
+
+    error_flag = False
+
+    if db_connection:
+        dbCursor = db_connection.cursor()
+        try:
+            dbCursor.execute(query)
+        except:
+            error_flag = True
+            logger.error(f'Ошибка при выполнении запроса: {query}')
+
+        if not error_flag:
+            if commit_flag == True:
+                db_connection.commit()
+
+            if result_type == 'one':
+                result = dbCursor.fetchone()
+
+            if result_type == 'all':
+                result = dbCursor.fetchall()
+
+    return result
+
+
 class PowerProfileItem:
     """
     Элемент профиля мощности
@@ -176,17 +221,11 @@ class PSCH:
     def __init__(self, params_):
         self.global_error = False  # Флаг глобальной ошибки, после которой невозможно работать метадам класса
 
-        # Конфигурация модуля логов
-        self.logger = logging.getLogger('app')
-        self.logger.setLevel(logging.INFO)
-        fh = logging.FileHandler('log.txt')
-        formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] [%(name)s] [%(message)s]')
-        fh.setFormatter(formatter)
-        self.logger.addHandler(fh)
-        self.logger.info('Инициализация приложения')
+        logger.info('Инициализация приложения')
 
         #
         self.port = None
+        self.counter_factory_number = params_['counter_factory_number']  # Заводской номер электросчётчика
         self.counter_identifier = params_[
             'counter_identifier']  # Идентификатор электросчётчика (десятичное значение)
         self.counter_divide = params_[
@@ -213,11 +252,11 @@ class PSCH:
                 timeout=params_['port_timeout']  # Таймаут
             )
 
-            self.logger.info('Инициализация com-порта прошла успешно')
+            logger.info('Инициализация com-порта прошла успешно')
 
 
         except:
-            self.logger.error('Инициализация com-порта произошла с ошибкой')
+            logger.error('Инициализация com-порта произошла с ошибкой')
             self.global_error = True
 
 
@@ -235,13 +274,13 @@ class PSCH:
                 crc = get_crc(cmd)
                 result = f'{cmd}{crc}'
             except:
-                self.logger.error(f'Ошибка при добавлении CRC к команде: {cmd}')
+                logger.error(f'Ошибка при добавлении CRC к команде: {cmd}')
                 self.global_error = True
 
         return result
 
 
-    def send_to_port(self, port_, counter_identifier_, cmd, cmd_print):
+    def send_to_port(self, port_, counter_identifier_, cmd):
         """
         Посылает запрос в com-порт.
 
@@ -250,7 +289,7 @@ class PSCH:
 
         result = b''
 
-        #cmd_print = False
+        cmd_print = False  # Флаг печати ввода/вывода команд в консоль
 
         if not self.global_error:
             try:
@@ -262,7 +301,7 @@ class PSCH:
                 hex_cmd = str_to_hex(cmd)
 
                 if cmd_print:
-                    print(f'TX    {hex_cmd.hex()}')
+                    print(f'TX:    {hex_cmd.hex()}')
 
                 port_.write(hex_cmd)
 
@@ -275,10 +314,10 @@ class PSCH:
                         break
 
                 if cmd_print:
-                    print(f'RX    {result.hex()}')
+                    print(f'RX:    {result.hex()}')
                     print('')
             except:
-                self.logger.error(f'Ошибка при отправке команды электросчётчику №: {cmd}')
+                logger.error(f'Ошибка при отправке команды электросчётчику №: {cmd}')
                 self.global_error = True
 
         return result.hex()
@@ -287,6 +326,8 @@ class PSCH:
     def test_counter(self, port_, counter_identifier_):
         """
         Проверка, доступен ли счётчик
+        Проверка строиться на посылке счётчику короткой строки, если в ответ пришла посылаемая строка,
+        то тест пройден
         """
 
         result = False
@@ -294,11 +335,12 @@ class PSCH:
 
         if not self.global_error:
             try:
-                r = self.send_to_port(port_, counter_identifier_, cmd, True)
+                r = self.send_to_port(port_, counter_identifier_, cmd)
                 if len(r) > 0:
+                    logger.info(f'Тест связи с электросчётчиком №: {counter_identifier_} пройден')
                     result = True
             except:
-                self.logger.error(f'Ошибка при тестирование связи с электросчётчиком №: {counter_identifier_}')
+                logger.error(f'Тест связи с электросчётчиком №: {counter_identifier_} не пройден')
                 self.global_error = True
 
         return result
@@ -316,13 +358,13 @@ class PSCH:
             try:
                 hex_password = counter_password_.encode().hex()
             except:
-                self.logger.error(f'Ошибка при конвертации пароля в HEX строку: {counter_password_}')
+                logger.error(f'Ошибка при конвертации пароля в HEX строку: {counter_password_}')
                 self.global_error = True
 
         if not self.global_error:
             try:
                 cmd = f'01{hex_password}'
-                r = self.send_to_port(port_, counter_identifier_, cmd, True)
+                r = self.send_to_port(port_, counter_identifier_, cmd)
 
                 etalon_ansver = str_to_hex(self.prepare_command(f'{int_to_hex_str(counter_identifier_)}00')).hex()
 
@@ -330,7 +372,7 @@ class PSCH:
                     if etalon_ansver == r:
                         result = True
             except:
-                self.logger.error(f'Ошибка при открытии канала с электросчётчиком №: {counter_identifier_}')
+                logger.error(f'Ошибка при открытии канала с электросчётчиком №: {counter_identifier_}')
                 self.global_error = True
 
         return result
@@ -346,7 +388,7 @@ class PSCH:
         if not self.global_error:
             try:
                 cmd = f'02'
-                r = self.send_to_port(port_, counter_identifier_, cmd, True)
+                r = self.send_to_port(port_, counter_identifier_, cmd)
 
                 etalon_ansver = str_to_hex(self.prepare_command(f'{int_to_hex_str(counter_identifier_)}00')).hex()
 
@@ -354,7 +396,7 @@ class PSCH:
                     if etalon_ansver == r:
                         result = True
             except:
-                self.logger.error(f'Ошибка при закрытии канала с электросчётчиком №: {counter_identifier_}')
+                logger.error(f'Ошибка при закрытии канала с электросчётчиком №: {counter_identifier_}')
                 self.global_error = True
 
         return result
@@ -370,29 +412,29 @@ class PSCH:
         if not self.global_error:
             # Прочитать версию ПО счетчика
             cmd = f'0803'
-            self.send_to_port(port_, counter_identifier_, cmd, True)
+            self.send_to_port(port_, counter_identifier_, cmd)
 
             # Прочитать установленные программируемые флаги из счетчика
             cmd = f'0809'
-            self.send_to_port(port_, counter_identifier_, cmd, True)
+            self.send_to_port(port_, counter_identifier_, cmd)
 
             # Прочитать время интегрирования мощности массива профиля счетчика
             cmd = f'0806'
-            self.send_to_port(port_, counter_identifier_, cmd, True)
+            self.send_to_port(port_, counter_identifier_, cmd)
 
             # Прочитать текущий указатель первого (или единственного) базового массива профиля мощности счетчика
             cmd = f'0804'
-            self.send_to_port(port_, counter_identifier_, cmd, True)
+            self.send_to_port(port_, counter_identifier_, cmd)
 
             #  Найти адрес заголовка на дату
             cmd = f'032800FFFFFF{date_}FF1E'
-            self.send_to_port(port_, counter_identifier_, cmd, True)
+            self.send_to_port(port_, counter_identifier_, cmd)
 
             # Найти указатель базаового массива профиля мощности на начало искомой даты
             p = '1'
             while p != '0':
                 cmd = f'081800'
-                r = self.send_to_port(port_, counter_identifier_, cmd, True)
+                r = self.send_to_port(port_, counter_identifier_, cmd)
 
                 try:
                     p = r[3]
@@ -402,7 +444,7 @@ class PSCH:
                     IndexError: string index out of range - ответ короче чем ожидается
                     """
 
-                    self.logger.error(f'Ошибка при попытке найти указатель электросчётка №: {counter_identifier_} на дату: {date_}')
+                    logger.error(f'Ошибка при попытке найти указатель электросчётка №: {counter_identifier_} на дату: {date_}')
                     self.global_error = True
                     break
 
@@ -418,7 +460,7 @@ class PSCH:
 
         if not self.global_error:
             cmd = f'0603{pointer_}07'
-            r = self.send_to_port(port_, counter_identifier_, cmd, True)
+            r = self.send_to_port(port_, counter_identifier_, cmd)
 
             part = f'00{date_}011E'
 
@@ -442,7 +484,7 @@ class PSCH:
         }
 
         cmd = f'0802'
-        r = self.send_to_port(port_, counter_identifier_, cmd, True)
+        r = self.send_to_port(port_, counter_identifier_, cmd)
 
         if not self.global_error:
             if len(r) == 26:
@@ -468,14 +510,14 @@ class PSCH:
         bytes_count = '82'  # Количество байт для считывания (82 в проприетарной утилите)
 
         cmd = f'0C{index_}{ma}{pointer_}{bytes_count}'
-        r = self.send_to_port(port_, counter_identifier_, cmd, True)
+        r = self.send_to_port(port_, counter_identifier_, cmd)
 
         # Отсекаем номер счётчика и индекс, отсекаем CRC
         if not self.global_error:
             try:
                 result = r[4:-4]
             except:
-                self.logger.error(f'Ошибка чтении строки с данными профиля мощности')
+                logger.error(f'Ошибка чтении строки с данными профиля мощности')
                 self.global_error = True
 
         return result
@@ -502,7 +544,7 @@ class PSCH:
                 ppi2.r_plus = round((int(hhx[24:28], 16) / divide_) * transform_, 2)
                 ppi2.r_minus = round((int(hhx[28:32], 16) / divide_) * transform_, 2)
             except:
-                self.logger.error(f'Ошибка при парсинге получасовок часа')
+                logger.error(f'Ошибка при парсинге получасовок часа')
                 self.global_error = True
 
 
@@ -525,7 +567,7 @@ class PSCH:
         if not self.global_error:
             try:
                 #print(f'Чтение профиля мощности за {make_true_date(date_)}')
-                self.logger.info(f'Чтение профиля мощности за {make_true_date(date_)}')
+                logger.info(f'Чтение профиля мощности за {make_true_date(date_)}')
 
                 # Циклично пытаемся найти пары получкасовок
                 # Данных пар не обязательно должно быть 24 (по две на час)
@@ -594,7 +636,7 @@ class PSCH:
 
                         pos += 2
             except:
-                self.logger.error(f'Ошибка при чтении профиля мощности за {make_true_date(date_)}')
+                logger.error(f'Ошибка при чтении профиля мощности за {make_true_date(date_)}')
                 self.global_error = True
 
         return result
@@ -630,41 +672,32 @@ class PSCH:
 
         result = []  # Массив суточных массивов профилей мощности
 
-        channel = self.open_channel(port_, counter_identifier_, self.counter_password)
-        if channel:
-            logging.info(f'Успешно откры канал с электросчётком {counter_identifier_}')
+        # последний день предыдущего месяца
+        last_day_prev_month = date.today().replace(day=1) - timedelta(days=1)
 
-            # последний день предыдущего месяца
-            last_day_prev_month = date.today().replace(day=1) - timedelta(days=1)
+        # Первый день предыдущего месяца
+        first_day_prev_month = date.today().replace(day=1) - timedelta(days=last_day_prev_month.day)
 
-            # Первый день предыдущего месяца
-            first_day_prev_month = date.today().replace(day=1) - timedelta(days=last_day_prev_month.day)
+        d = first_day_prev_month
 
-            d = first_day_prev_month
+        self.prevmonth = f'{str(d)[0:4]}_{str(d)[5:7]}'
 
-            self.prevmonth = f'{str(d)[0:4]}_{str(d)[5:7]}'
+        if not self.global_error:
+            while d != last_day_prev_month + timedelta(days=1):
+                date_param = f'{str(d)[8:10]}{str(d)[5:7]}{str(d)[2:4]}'
 
-            if not self.global_error:
-                while d != last_day_prev_month + timedelta(days=1):
-                    date_param = f'{str(d)[8:10]}{str(d)[5:7]}{str(d)[2:4]}'
+                pointer_ = self.read_power_profile_pointer_on_date(port_, counter_identifier_, date_param)
 
-                    pointer_ = self.read_power_profile_pointer_on_date(port_, counter_identifier_, date_param)
+                if self.read_7bit_header(port_, counter_identifier_, date_param, pointer_):
+                    self.read_transformation_coefficient(port_, counter_identifier_)
 
-                    if self.read_7bit_header(port_, counter_identifier_, date_param, pointer_):
-                        self.read_transformation_coefficient(port_, counter_identifier_)
+                    day_data = self.read_power_profile(port_, counter_identifier_, pointer_, date_param, divide_, transform_)
 
-                        day_data = self.read_power_profile(port_, counter_identifier_, pointer_, date_param, divide_, transform_)
+                    result.extend(day_data)
 
-                        result.extend(day_data)
+                d += timedelta(days=1)
 
-                    d += timedelta(days=1)
-
-                self.close_channel(port_, counter_identifier_)
-        else:
-            """
-            Одна из причин - это неверный пароль 
-            """
-            logging.error(f'Неудалось открыт канал с электросчётком {counter_identifier_}')
+            self.close_channel(port_, counter_identifier_)
 
         return result
 
@@ -694,7 +727,7 @@ class PSCH:
             try:
                 wb = openpyxl.load_workbook(filename=template_xlsx_)
             except:
-                self.logger.error(f'Ошибка при попытке открыть шаблон {template_xlsx_}')
+                logger.error(f'Ошибка при попытке открыть шаблон {template_xlsx_}')
                 self.global_error = True
 
         if not self.global_error:
@@ -712,20 +745,68 @@ class PSCH:
                     page2[f"""A{i + 13}"""] = f'{item.date_param}  {item.time_param}'
                     page2[f"""J{i + 13}"""] = f'{str(item.a_plus)}'
             except:
-                self.logger.error(f'Ошибка при добавлении данных в шаблон {template_xlsx_}')
+                logger.error(f'Ошибка при добавлении данных в шаблон {template_xlsx_}')
                 self.global_error = True
 
         if not self.global_error:
             try:
                 wb.save(filename=result_xlsx_)
-                self.logger.info(f'Успешное сохранение профиля нагрузки в файл {result_xlsx_}')
+                logger.info(f'Успешное сохранение профиля нагрузки в файл {result_xlsx_}')
             except:
-                self.logger.error(f'Ошибка при сохранении файла {result_xlsx_}')
+                logger.error(f'Ошибка при сохранении файла {result_xlsx_}')
                 self.global_error = True
+
+
+    def power_profile_to_mysql(self, power_profile_items_):
+        """
+
+        """
+        db = None
+
+        try:
+            db = pymysql.connect(
+                host=self.mysql_host,
+                db=self.mysql_db,
+                user=self.mysql_user,
+                password=self.mysql_password,
+                cursorclass=pymysql.cursors.DictCursor)
+
+            logger.info(f'Успешное подключение к БД {self.mysql_host}.{self.mysql_db}')
+        except:
+            logger.error(f'Ошибка при подключении к БД {self.mysql_host}.{self.mysql_db}')
+
+        if db != None:
+
+            #
+            query = f"select counterID from counters where serialNumber = '{self.counter_factory_number}'"
+            mysql_result = mysql_execute(db, query, False, 'one')
+
+            if mysql_result != None:
+                counter_id = mysql_result['counterID']
+
+                for item in power_profile_items_:
+                    query = f"insert into loadprofiles (counterID, dt, activePowerConsumed, reactiveEnergyConsumed) " \
+                        f" select '{counter_id}', " \
+                        f" '{item.date_time}', " \
+                        f" {item.a_plus}, " \
+                        f" {item.r_plus} " \
+                        f" FROM (SELECT 1) as dummytable " \
+                        f" WHERE NOT EXISTS (SELECT 1 FROM loadprofiles WHERE " \
+                        f" counterID='{counter_id}' and " \
+                        f" dt='{item.date_time}' " \
+                        f")"
+                    mysql_result = mysql_execute(db, query, True, 'one')
+
 
 
 ########################################################################################################################
 
+ext_cmd = ''  # Параметр переданный скрипту
+
+if len(sys.argv) > 1:
+    ext_cmd = sys.argv[1]
+
+print(ext_cmd)
 
 params = {
     'port_name': 'COM3',  # Имя com-порта
@@ -734,13 +815,14 @@ params = {
     'port_stopbits': 1,  # Стоповые биты
     'port_bytesize': 8,  # Размер байт
     'port_timeout': 0.3,  # Таймаут
+    'counter_factory_number': '........104',  # Заводской номер электросчётчика
     'counter_identifier': 104,  # Идентификатор электросчётчика (десятичное значение)
     'counter_divide': 1250,  # Постоянная счетчика в зависимости от типа и варианта исполнения (ПСЧ-4ТМ.05МК)
     'counter_transform': 400,  # Коэффициент трансформации (Следует узнать у энергетика)
     'counter_password': '000000',  # Пароль для доступа к электросчётчику
     'xlsx_template': 'template.xlsx',  # Шаблон для выгруки ексел
     'xlsx_result': 'result.xlsx',  # Результирующий файл ексель
-    'mysql_host': '',  #
+    'mysql_host': 'localhost',  #
     'mysql_db': '',  #
     'mysql_user': '',  #
     'mysql_password': ''  #
@@ -748,5 +830,29 @@ params = {
 
 psch = PSCH(params)
 
-res = psch.get_prevmonth_power_profile(psch.port, psch.counter_identifier, psch.counter_divide, 1)
-psch.power_profile_to_xlsx(res, psch.xlsx_template, f'{psch.counter_identifier}_{psch.prevmonth}.xlsx')
+if psch.test_counter(psch.port, psch.counter_identifier):
+    logging.info(f'Тест электросчётчика {psch.counter_identifier} пройден')
+
+    if psch.open_channel(psch.port, psch.counter_identifier, psch.counter_password):
+
+        # Профиль мощности за вчера (для ускорения тестов)
+        #items = psch.get_prevday_power_profile(psch.port, psch.counter_identifier, psch.counter_divide, 1)
+
+        # Профиль мощности за прошлый месяц
+        items = psch.get_prevmonth_power_profile(psch.port, psch.counter_identifier, psch.counter_divide, 1)
+
+        # Сохранение в ексель файл найденых элементов
+        if ext_cmd == '-xlsx':
+            fn = f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/{psch.counter_identifier}_{psch.prevmonth}.xlsx'
+            psch.power_profile_to_xlsx(items, psch.xlsx_template, fn)
+
+        # Сохранение в БД найденых элементов
+        if ext_cmd == '-mysql':
+            psch.power_profile_to_mysql(items)
+    else:
+        """
+        Одна из причин - это неверный пароль 
+        """
+        logging.error(f'Неудалось открыт канал с электросчётком {psch.counter_identifier}')
+else:
+    logging.error(f'Тест электросчётчика {psch.counter_identifier} не пройден')
