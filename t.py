@@ -259,7 +259,6 @@ class PSCH:
             logger.error('Инициализация com-порта произошла с ошибкой')
             self.global_error = True
 
-
     def prepare_command(self, cmd):
         """
         Добавляет в конец команды crc
@@ -278,7 +277,6 @@ class PSCH:
                 self.global_error = True
 
         return result
-
 
     def send_to_port(self, port_, counter_identifier_, cmd):
         """
@@ -322,7 +320,6 @@ class PSCH:
 
         return result.hex()
 
-
     def test_counter(self, port_, counter_identifier_):
         """
         Проверка, доступен ли счётчик
@@ -344,7 +341,6 @@ class PSCH:
                 self.global_error = True
 
         return result
-
 
     def open_channel(self, port_, counter_identifier_, counter_password_):
         """
@@ -377,7 +373,6 @@ class PSCH:
 
         return result
 
-
     def close_channel(self, port_, counter_identifier_):
         """
         Закрытие канала связи со счётчиком
@@ -400,7 +395,6 @@ class PSCH:
                 self.global_error = True
 
         return result
-
 
     def read_power_profile_pointer_on_date(self, port_, counter_identifier_, date_):
         """
@@ -431,25 +425,33 @@ class PSCH:
             self.send_to_port(port_, counter_identifier_, cmd)
 
             # Найти указатель базаового массива профиля мощности на начало искомой даты
+            dt_end = datetime.now() + timedelta(seconds=10)  # Время не больше которого должен идти поиск
             p = '1'
+            cmd = f'081800'
             while p != '0':
-                cmd = f'081800'
                 r = self.send_to_port(port_, counter_identifier_, cmd)
 
+                if len(r) == 16:
+                    p = r[3]
+                    r = f'{r[8]}{r[9]}{r[10]}{r[11]}'
+
+                if dt_end < datetime.now():
+                    logger.error(
+                        f'Ошибка при попытке найти указатель электросчётка №: {counter_identifier_} на дату: {make_true_date(date_)}')
+                    self.global_error = True
+                    break
+
+                """
                 try:
                     p = r[3]
                     r = f'{r[8]}{r[9]}{r[10]}{r[11]}'
                 except:
-                    """
-                    IndexError: string index out of range - ответ короче чем ожидается
-                    """
-
                     logger.error(f'Ошибка при попытке найти указатель электросчётка №: {counter_identifier_} на дату: {date_}')
                     self.global_error = True
                     break
+                """
 
         return r
-
 
     def read_7bit_header(self, port_, counter_identifier_, date_, pointer_):
         """
@@ -468,7 +470,6 @@ class PSCH:
                 result = True
 
         return result
-
 
     def read_transformation_coefficient(self, port_, counter_identifier_):
         """
@@ -496,7 +497,6 @@ class PSCH:
 
         return result
 
-
     def read_power_profile_line(self, port_, counter_identifier_, index_, pointer_):
         """
         Прочитать первую или очередную строку с данными профиля мощности
@@ -522,7 +522,6 @@ class PSCH:
 
         return result
 
-
     def prepare_power_profile_item(self, ppi1, ppi2, hhx, divide_, transform_):
         """
         Парсим данные
@@ -547,11 +546,11 @@ class PSCH:
                 logger.error(f'Ошибка при парсинге получасовок часа')
                 self.global_error = True
 
-
     def read_power_profile(self, port_, counter_identifier_, pointer_, date_, divide_, transform_):
         """
         Прочитать все значения профиля мощности на дату date_
         pointer -  значение из функции read_power_profile_pointer_on_date()
+        :date: ddmmyy
         """
 
         result = []
@@ -641,7 +640,6 @@ class PSCH:
 
         return result
 
-
     def get_prevday_power_profile(self, port_, counter_identifier_, divide_, transform_):
         """
         Прочитать все значения профиля мощности на вчера
@@ -663,7 +661,6 @@ class PSCH:
                 result = self.read_power_profile(port_, counter_identifier_, pointer_, date_param, divide_, transform_)
 
         return result
-
 
     def get_prevmonth_power_profile(self, port_, counter_identifier_, divide_, transform_):
         """
@@ -689,9 +686,14 @@ class PSCH:
                 pointer_ = self.read_power_profile_pointer_on_date(port_, counter_identifier_, date_param)
 
                 if self.read_7bit_header(port_, counter_identifier_, date_param, pointer_):
-                    self.read_transformation_coefficient(port_, counter_identifier_)
+                    #self.read_transformation_coefficient(port_, counter_identifier_)
 
-                    day_data = self.read_power_profile(port_, counter_identifier_, pointer_, date_param, divide_, transform_)
+                    day_data = self.read_power_profile(port_,
+                                                       counter_identifier_,
+                                                       pointer_,
+                                                       date_param,
+                                                       divide_,
+                                                       transform_)
 
                     result.extend(day_data)
 
@@ -700,7 +702,6 @@ class PSCH:
             self.close_channel(port_, counter_identifier_)
 
         return result
-
 
     def print_power_profile(self, power_profile_items_):
         """
@@ -715,7 +716,6 @@ class PSCH:
                   f'{item.a_minus} | '
                   f'{item.r_plus} | '
                   f'{item.r_minus} |')
-
 
     def power_profile_to_xlsx(self, power_profile_items_, template_xlsx_, result_xlsx_):
         """
@@ -756,46 +756,73 @@ class PSCH:
                 logger.error(f'Ошибка при сохранении файла {result_xlsx_}')
                 self.global_error = True
 
-
     def power_profile_to_mysql(self, power_profile_items_):
         """
 
         """
-        db = None
+        if not self.global_error:
+            db = None
 
-        try:
-            db = pymysql.connect(
-                host=self.mysql_host,
-                db=self.mysql_db,
-                user=self.mysql_user,
-                password=self.mysql_password,
-                cursorclass=pymysql.cursors.DictCursor)
+            try:
+                db = pymysql.connect(
+                    host=self.mysql_host,
+                    db=self.mysql_db,
+                    user=self.mysql_user,
+                    password=self.mysql_password,
+                    cursorclass=pymysql.cursors.DictCursor)
 
-            logger.info(f'Успешное подключение к БД {self.mysql_host}.{self.mysql_db}')
-        except:
-            logger.error(f'Ошибка при подключении к БД {self.mysql_host}.{self.mysql_db}')
+                logger.info(f'Успешное подключение к БД {self.mysql_host}.{self.mysql_db}')
+            except:
+                logger.error(f'Ошибка при подключении к БД {self.mysql_host}.{self.mysql_db}')
 
-        if db != None:
+            if db != None:
+                #
+                query = f"select counterID from counters where serialNumber = '{self.counter_factory_number}'"
+                mysql_result = mysql_execute(db, query, False, 'one')
 
-            #
-            query = f"select counterID from counters where serialNumber = '{self.counter_factory_number}'"
-            mysql_result = mysql_execute(db, query, False, 'one')
+                if mysql_result != None:
+                    counter_id = mysql_result['counterID']
 
-            if mysql_result != None:
-                counter_id = mysql_result['counterID']
+                    for item in power_profile_items_:
+                        query = f"insert into loadprofiles (counterID, dt, activePowerConsumed, reactiveEnergyConsumed) " \
+                            f" select '{counter_id}', " \
+                            f" '{item.date_time}', " \
+                            f" {item.a_plus}, " \
+                            f" {item.r_plus} " \
+                            f" FROM (SELECT 1) as dummytable " \
+                            f" WHERE NOT EXISTS (SELECT 1 FROM loadprofiles WHERE " \
+                            f" counterID='{counter_id}' and " \
+                            f" dt='{item.date_time}' " \
+                            f")"
+                        mysql_execute(db, query, True, 'one')
 
-                for item in power_profile_items_:
-                    query = f"insert into loadprofiles (counterID, dt, activePowerConsumed, reactiveEnergyConsumed) " \
-                        f" select '{counter_id}', " \
-                        f" '{item.date_time}', " \
-                        f" {item.a_plus}, " \
-                        f" {item.r_plus} " \
-                        f" FROM (SELECT 1) as dummytable " \
-                        f" WHERE NOT EXISTS (SELECT 1 FROM loadprofiles WHERE " \
-                        f" counterID='{counter_id}' and " \
-                        f" dt='{item.date_time}' " \
-                        f")"
-                    mysql_result = mysql_execute(db, query, True, 'one')
+                db.close()
+
+    def power_profile_to_mysql_by_days(self, port_, counter_identifier_, divide_, transform_, days_count_):
+        """
+        Записывает в БД профиль мощности за указанное количество дней
+        """
+
+        dtn = datetime.now()  # Текущий тайм стемп
+
+        i = 0
+
+        while i != days_count_+1:
+            i += 1
+            ydtn = dtn - timedelta(days=i)
+            date_param = f'{str(ydtn)[8:10]}{str(ydtn)[5:7]}{str(ydtn)[2:4]}'  # Формат даты для посылки в электросчётчик
+
+            if not self.global_error:
+                pointer_ = self.read_power_profile_pointer_on_date(port_, counter_identifier_, date_param)
+
+                #if self.read_7bit_header(port_, counter_identifier_, date_param, pointer_):
+                day_data = self.read_power_profile(port_,
+                                                    counter_identifier_,
+                                                    pointer_,
+                                                    date_param,
+                                                    divide_,
+                                                    transform_)
+                self.power_profile_to_mysql(day_data)
 
 
 
@@ -815,7 +842,7 @@ params = {
     'port_stopbits': 1,  # Стоповые биты
     'port_bytesize': 8,  # Размер байт
     'port_timeout': 0.3,  # Таймаут
-    'counter_factory_number': '........104',  # Заводской номер электросчётчика
+    'counter_factory_number': '1103181104',  # Заводской номер электросчётчика
     'counter_identifier': 104,  # Идентификатор электросчётчика (десятичное значение)
     'counter_divide': 1250,  # Постоянная счетчика в зависимости от типа и варианта исполнения (ПСЧ-4ТМ.05МК)
     'counter_transform': 400,  # Коэффициент трансформации (Следует узнать у энергетика)
@@ -834,21 +861,50 @@ if psch.test_counter(psch.port, psch.counter_identifier):
     logging.info(f'Тест электросчётчика {psch.counter_identifier} пройден')
 
     if psch.open_channel(psch.port, psch.counter_identifier, psch.counter_password):
+        # тесты
+        #ext_cmd = '-test'
+        if ext_cmd == '-test':
+            date_param = '270521'
+            pointer = psch.read_power_profile_pointer_on_date(psch.port,
+                                                              psch.counter_identifier,
+                                                              date_param)
+            items = psch.read_power_profile(psch.port,
+                                            psch.counter_identifier,
+                                            pointer,
+                                            date_param,
+                                            psch.counter_divide,
+                                            1)
+            psch.print_power_profile(items)
 
-        # Профиль мощности за вчера (для ускорения тестов)
-        #items = psch.get_prevday_power_profile(psch.port, psch.counter_identifier, psch.counter_divide, 1)
-
-        # Профиль мощности за прошлый месяц
-        items = psch.get_prevmonth_power_profile(psch.port, psch.counter_identifier, psch.counter_divide, 1)
-
-        # Сохранение в ексель файл найденых элементов
+        # Сохранение в ексель
+        #ext_cmd = '-xlsx'
         if ext_cmd == '-xlsx':
-            fn = f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/{psch.counter_identifier}_{psch.prevmonth}.xlsx'
-            psch.power_profile_to_xlsx(items, psch.xlsx_template, fn)
+            #items = psch.read_power_profile_pointer_on_date(psch.port, psch.counter_identifier, '270521')
 
-        # Сохранение в БД найденых элементов
+            # Профиль мощности за вчера (для ускорения тестов)
+            # items = psch.get_prevday_power_profile(psch.port, psch.counter_identifier, psch.counter_divide, 1)
+
+            # Профиль мощности за прошлый месяц
+            items = psch.get_prevmonth_power_profile(psch.port,
+                                                     psch.counter_identifier,
+                                                     psch.counter_divide,
+                                                     1)
+
+            fn = f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/{psch.counter_identifier}_{psch.prevmonth}.xlsx'
+            psch.power_profile_to_xlsx(items,
+                                       psch.xlsx_template,
+                                       fn)
+
+        # Сохранение в БД
+        #ext_cmd = '-mysql'
         if ext_cmd == '-mysql':
-            psch.power_profile_to_mysql(items)
+            # Профиль мощности за 90
+            days_count = 90
+            psch.power_profile_to_mysql_by_days(psch.port,
+                                                psch.counter_identifier,
+                                                psch.counter_divide,
+                                                1,
+                                                days_count)
     else:
         """
         Одна из причин - это неверный пароль 
