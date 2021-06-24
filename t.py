@@ -233,6 +233,7 @@ class PSCH:
         self.counter_transform = params_[
             'counter_transform']  # Коэффициент трансформации (Следует узнать у энергетика)
         self.counter_password = params_['counter_password']  # Пароль для доступа к электросчётчику
+        self.counter_top = params_['counter_top']  # Предельное значение мощности
         self.xlsx_template = params_['xlsx_template']  # Шаблон для выгруки ексел
         self.xlsx_result = params_['xlsx_result']  # Результирующий файл ексель
         self.prevmonth = ''  # Параметр для результирующего фаля ексель. гггг_мм (2021_06)
@@ -593,6 +594,8 @@ class PSCH:
                     if data.find(f'23{date_}') != -1:
                         fl = True
 
+                #print(data)
+
                 # Если успешно нашли 24-ю(последнюю) пару получасовок
                 if fl:
                     hht = half_hour_time()
@@ -628,7 +631,8 @@ class PSCH:
                         l = data.split(h)
 
                         if len(l) > 1:
-                            hhx = l[1]
+                            hhx = l[len(l) -1]
+
                             if len(hhx) > 39:
                                 hhx = hhx[8:40]
                                 self.prepare_power_profile_item(item1, item2, hhx, divide_, transform_)
@@ -824,6 +828,139 @@ class PSCH:
                                                     transform_)
                 self.power_profile_to_mysql(day_data)
 
+    def create_report(self):
+        first_day_month = date.today().replace(day=1)
+
+        if not self.global_error:
+            db = None
+
+            try:
+                db = pymysql.connect(
+                    host=self.mysql_host,
+                    db=self.mysql_db,
+                    user=self.mysql_user,
+                    password=self.mysql_password,
+                    cursorclass=pymysql.cursors.DictCursor)
+
+                logger.info(f'Успешное подключение к БД {self.mysql_host}.{self.mysql_db}')
+            except:
+                logger.error(f'Ошибка при подключении к БД {self.mysql_host}.{self.mysql_db}')
+
+            if db != None:
+                # Выгрузка отчёта за весь переод получения данных
+                query = f"select counterID from counters where serialNumber = '{self.counter_factory_number}'"
+                mysql_result = mysql_execute(db, query, False, 'one')
+
+                if mysql_result != None:
+                    counter_id = mysql_result['counterID']
+
+                    query = f"select dt, activePowerConsumed from loadprofiles where counterID='{counter_id}' ORDER BY dt"
+                    res = mysql_execute(db, query, False, 'all')
+
+                    if res != None:
+                        # Выгрузка графика по всем данным
+                        file = open(f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/report_all.html', 'w')
+
+                        s = """
+                        <html>
+                            <head>
+                            <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+                            <script type="text/javascript">
+                            google.charts.load('current', {'packages':['corechart']});
+                            google.charts.setOnLoadCallback(drawChart);
+
+                            function drawChart() {
+                            var data = google.visualization.arrayToDataTable([
+                        """
+                        file.write(s)
+
+                        s = f"['Дата', 'Активная потреблённая', 'Предел'],"
+
+                        for item in res:
+                            s += f"['{item['dt']}', {item['activePowerConsumed'] * self.counter_transform}, {self.counter_top}],"
+
+                        file.write(s)
+
+                        s = """
+                        ]);
+                        var options = {
+                        title: 'ПСЧ: Приморский край, Владивосток, Народный проспект, 20; Все данные',
+                        curveType: 'function',
+                        legend: { position: 'bottom' }
+                        };
+
+                        var chart = new google.visualization.LineChart(document.getElementById('curve_chart'));
+
+                        chart.draw(data, options);
+                        }
+                        </script>
+                        </head>
+                        <body>
+                        <div id="curve_chart" style="width: 100%; height: 100%"></div>
+                        </body>
+                        </html>
+                        """
+                        file.write(s)
+
+                        file.close()
+
+                # Выгрузка отчёта за текущий месяц
+                query = f"select counterID from counters where serialNumber = '{self.counter_factory_number}'"
+                mysql_result = mysql_execute(db, query, False, 'one')
+
+                if mysql_result != None:
+                    last_day_prev_month = date.today().replace(day=1) - timedelta(days=1)  # последний день предыдущего месяца
+                    counter_id = mysql_result['counterID']
+
+                    query = f"select dt, activePowerConsumed from loadprofiles where counterID='{counter_id}' and date(dt) > '{last_day_prev_month}' ORDER BY dt"
+                    res = mysql_execute(db, query, False, 'all')
+
+                    if res != None:
+                        # Выгрузка графика по всем данным
+                        file = open(f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/report_month.html', 'w')
+
+                        s = """
+                        <html>
+                        <head>
+                        <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+                        <script type="text/javascript">
+                        google.charts.load('current', {'packages':['corechart']});
+                        google.charts.setOnLoadCallback(drawChart);
+
+                        function drawChart() {
+                        var data = google.visualization.arrayToDataTable([
+                        """
+                        file.write(s)
+
+                        s = f"['Дата', 'Активная потреблённая', 'Предел'],"
+
+                        for item in res:
+                            s += f"['{item['dt']}', {item['activePowerConsumed'] * self.counter_transform}, {self.counter_top}],"
+
+                        file.write(s)
+
+                        s = """
+                        ]);
+                        var options = {
+                        title: 'ПСЧ: Приморский край, Владивосток, Народный проспект, 20; За текущий месяц',
+                        curveType: 'function',
+                        legend: { position: 'bottom' }
+                        };
+
+                        var chart = new google.visualization.LineChart(document.getElementById('curve_chart'));
+
+                        chart.draw(data, options);
+                        }
+                        </script>
+                        </head>
+                        <body>
+                        <div id="curve_chart" style="width: 100%; height: 100%"></div>
+                        </body>
+                        </html>
+                        """
+                        file.write(s)
+
+                        file.close()
 
 
 ########################################################################################################################
@@ -847,6 +984,7 @@ params = {
     'counter_divide': 1250,  # Постоянная счетчика в зависимости от типа и варианта исполнения (ПСЧ-4ТМ.05МК)
     'counter_transform': 400,  # Коэффициент трансформации (Следует узнать у энергетика)
     'counter_password': '000000',  # Пароль для доступа к электросчётчику
+    'counter_top': 500,  # Предельное значение мощности
     'xlsx_template': 'template.xlsx',  # Шаблон для выгруки ексел
     'xlsx_result': 'result.xlsx',  # Результирующий файл ексель
     'mysql_host': 'localhost',  #
@@ -864,7 +1002,7 @@ if psch.test_counter(psch.port, psch.counter_identifier):
         # тесты
         #ext_cmd = '-test'
         if ext_cmd == '-test':
-            date_param = '270521'
+            date_param = '190521'
             pointer = psch.read_power_profile_pointer_on_date(psch.port,
                                                               psch.counter_identifier,
                                                               date_param)
@@ -905,6 +1043,12 @@ if psch.test_counter(psch.port, psch.counter_identifier):
                                                 psch.counter_divide,
                                                 1,
                                                 days_count)
+
+        # HTML-отчёты
+        #ext_cmd = '-reports'
+        if ext_cmd == '-reports':
+            psch.create_report()
+
     else:
         """
         Одна из причин - это неверный пароль 
