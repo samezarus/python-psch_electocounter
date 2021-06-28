@@ -855,7 +855,6 @@ class PSCH:
                 if mysql_result != None:
                     counter_id = mysql_result['counterID']
 
-                    # Статичный график
                     query = f"select dt, activePowerConsumed from loadprofiles where counterID='{counter_id}' ORDER BY dt"
                     res = mysql_execute(db, query, False, 'all')
 
@@ -911,53 +910,66 @@ class PSCH:
                                     'w')
 
                         s = """
-                                                <html>
-                                                <head>
-                                                <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
-                                                <script type='text/javascript'>
-                                                google.charts.load('current', {'packages':['annotationchart']});
-                                                google.charts.setOnLoadCallback(drawChart);
+                        <html>
+                        <head>
+                        <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+                        <script type='text/javascript'>
+                        google.charts.load('current', {'packages':['annotationchart']});
+                        google.charts.setOnLoadCallback(drawChart);
 
-                                                function drawChart() {
-                                                var data = new google.visualization.DataTable();
-                                                data.addColumn('date', 'Дата');
-                                                data.addColumn('number', 'Активная потреблённая');
-                                                data.addColumn('number', 'Порог мощности');
-                                                data.addRows([
-                                                """
+                        function drawChart() {
+                        var data = new google.visualization.DataTable();
+                        data.addColumn('date', 'Дата');
+                        data.addColumn('number', 'Активная потреблённая');
+                        data.addColumn('number', 'Порог мощности');
+                        data.addRows([
+                        """
                         file.write(s)
 
                         s = ""
                         for item in res:
-                            s += f"[new Date({str(item['dt'])[0:4]}, " \
-                                 f"{str(item['dt'])[5:7]}, " \
-                                 f"{str(item['dt'])[8:10]}, " \
-                                 f"{str(item['dt'])[11:13]}, " \
-                                 f"{str(item['dt'])[14:16]}, " \
-                                 f"{str(item['dt'])[17:19]}), " \
+                            d_y = str(item['dt'])[0:4]
+                            d_m = str(item['dt'])[5:7]
+                            d_d = str(item['dt'])[8:10]
+                            d_h = str(item['dt'])[11:13]
+                            d_min = str(item['dt'])[14:16]
+                            d_s = str(item['dt'])[17:19]
+
+                            d_m = int(d_m) - 1
+                            d_m = str(d_m)
+
+
+                            s += f"[new Date({d_y}, " \
+                                 f"{d_m}, " \
+                                 f"{d_d}, " \
+                                 f"{d_h}, " \
+                                 f"{d_min}, " \
+                                 f"{d_s}), " \
                                  f"{item['activePowerConsumed'] * self.counter_transform}, " \
                                  f"{self.counter_top}], "
                         file.write(s)
 
                         s = """
-                                                ]);
+                        ]);
 
-                                                var chart = new google.visualization.AnnotationChart(document.getElementById('chart_div'));
+                        var chart = new google.visualization.AnnotationChart(document.getElementById('chart_div'));
 
-                                                var options = {
-                                                displayAnnotations: true
-                                                };
+                        var options = {
+                        displayAnnotations: true, 
+                        displayDateBarSeparator: true,
+                        dateFormat: 'dd.MM.yyyy HH:mm'
+                        };
 
-                                                chart.draw(data, options);
-                                                }
-                                                </script>
-                                                </head>
+                        chart.draw(data, options);
+                        }
+                        </script>
+                        </head>
 
-                                                <body>
-                                                <div id='chart_div' style='width: 100%; height: 100%;'></div>
-                                                </body>
-                                                </html>
-                                                """
+                        <body>
+                        <div id='chart_div' style='width: 100%; height: 100%;'></div>
+                        </body>
+                        </html>
+                        """
                         file.write(s)
 
                         file.close()
@@ -1045,12 +1057,22 @@ class PSCH:
 
                         s = ""
                         for item in res:
-                            s += f"[new Date({str(item['dt'])[0:4]}, " \
-                                 f"{str(item['dt'])[5:7]}, " \
-                                 f"{str(item['dt'])[8:10]}, " \
-                                 f"{str(item['dt'])[11:13]}, " \
-                                 f"{str(item['dt'])[14:16]}, " \
-                                 f"{str(item['dt'])[17:19]}), " \
+                            d_y = str(item['dt'])[0:4]
+                            d_m = str(item['dt'])[5:7]
+                            d_d = str(item['dt'])[8:10]
+                            d_h = str(item['dt'])[11:13]
+                            d_min = str(item['dt'])[14:16]
+                            d_s = str(item['dt'])[17:19]
+
+                            d_m = int(d_m) - 1
+                            d_m = str(d_m)
+
+                            s += f"[new Date({d_y}, " \
+                                 f"{d_m}, " \
+                                 f"{d_d}, " \
+                                 f"{d_h}, " \
+                                 f"{d_min}, " \
+                                 f"{d_s}), " \
                                  f"{item['activePowerConsumed'] * self.counter_transform}, " \
                                  f"{self.counter_top}], "
                         file.write(s)
@@ -1061,7 +1083,9 @@ class PSCH:
                         var chart = new google.visualization.AnnotationChart(document.getElementById('chart_div'));
 
                         var options = {
-                        displayAnnotations: true
+                        displayAnnotations: true, 
+                        displayDateBarSeparator: true,
+                        dateFormat: 'dd.MM.yyyy HH:mm'
                         };
 
                         chart.draw(data, options);
@@ -1104,8 +1128,8 @@ params = {
     'xlsx_template': 'template.xlsx',  # Шаблон для выгруки ексел
     'xlsx_result': 'result.xlsx',  # Результирующий файл ексель
     'mysql_host': 'localhost',  #
-    'mysql_db': '',  #
-    'mysql_user': '',  #
+    'mysql_db': 'electro',  #
+    'mysql_user': 'electro',  #
     'mysql_password': ''  #
 }
 
@@ -1161,7 +1185,7 @@ if psch.test_counter(psch.port, psch.counter_identifier):
                                                 days_count)
 
         # HTML-отчёты
-        ext_cmd = '-reports'
+        #ext_cmd = '-reports'
         if ext_cmd == '-reports':
             psch.create_report()
 
