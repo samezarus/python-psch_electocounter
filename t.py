@@ -829,6 +829,7 @@ class PSCH:
                 self.power_profile_to_mysql(day_data)
 
     def create_report(self):
+        # https://developers.google.com/chart/interactive/docs/gallery/annotationchart?hl=ru
         first_day_month = date.today().replace(day=1)
 
         if not self.global_error:
@@ -854,11 +855,12 @@ class PSCH:
                 if mysql_result != None:
                     counter_id = mysql_result['counterID']
 
+                    # Статичный график
                     query = f"select dt, activePowerConsumed from loadprofiles where counterID='{counter_id}' ORDER BY dt"
                     res = mysql_execute(db, query, False, 'all')
 
                     if res != None:
-                        # Выгрузка графика по всем данным
+                        # Статичный график
                         file = open(f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/report_all.html', 'w')
 
                         s = """
@@ -904,6 +906,64 @@ class PSCH:
 
                         file.close()
 
+                        # Эксперементальный график
+                        file = open(f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/report_all_e.html',
+                                    'w')
+
+                        s = """
+                                                <html>
+                                                <head>
+                                                <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+                                                <script type='text/javascript'>
+                                                google.charts.load('current', {'packages':['annotationchart']});
+                                                google.charts.setOnLoadCallback(drawChart);
+
+                                                function drawChart() {
+                                                var data = new google.visualization.DataTable();
+                                                data.addColumn('date', 'Дата');
+                                                data.addColumn('number', 'Активная потреблённая');
+                                                data.addColumn('number', 'Порог мощности');
+                                                data.addRows([
+                                                """
+                        file.write(s)
+
+                        s = ""
+                        for item in res:
+                            s += f"[new Date({str(item['dt'])[0:4]}, " \
+                                 f"{str(item['dt'])[5:7]}, " \
+                                 f"{str(item['dt'])[8:10]}, " \
+                                 f"{str(item['dt'])[11:13]}, " \
+                                 f"{str(item['dt'])[14:16]}, " \
+                                 f"{str(item['dt'])[17:19]}), " \
+                                 f"{item['activePowerConsumed'] * self.counter_transform}, " \
+                                 f"{self.counter_top}], "
+                        file.write(s)
+
+                        s = """
+                                                ]);
+
+                                                var chart = new google.visualization.AnnotationChart(document.getElementById('chart_div'));
+
+                                                var options = {
+                                                displayAnnotations: true
+                                                };
+
+                                                chart.draw(data, options);
+                                                }
+                                                </script>
+                                                </head>
+
+                                                <body>
+                                                <div id='chart_div' style='width: 100%; height: 100%;'></div>
+                                                </body>
+                                                </html>
+                                                """
+                        file.write(s)
+
+                        file.close()
+
+                ########################################################################################################
+
                 # Выгрузка отчёта за текущий месяц
                 query = f"select counterID from counters where serialNumber = '{self.counter_factory_number}'"
                 mysql_result = mysql_execute(db, query, False, 'one')
@@ -916,7 +976,7 @@ class PSCH:
                     res = mysql_execute(db, query, False, 'all')
 
                     if res != None:
-                        # Выгрузка графика по всем данным
+                        # Cтатичный график
                         file = open(f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/report_month.html', 'w')
 
                         s = """
@@ -955,6 +1015,62 @@ class PSCH:
                         </head>
                         <body>
                         <div id="curve_chart" style="width: 100%; height: 100%"></div>
+                        </body>
+                        </html>
+                        """
+                        file.write(s)
+
+                        file.close()
+
+                        # Эксперементальный график
+                        file = open(f'C:/temp/Приморский край, Владивосток, Народный проспект, 20/report_month_e.html',
+                                    'w')
+
+                        s = """
+                        <html>
+                        <head>
+                        <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+                        <script type='text/javascript'>
+                        google.charts.load('current', {'packages':['annotationchart']});
+                        google.charts.setOnLoadCallback(drawChart);
+
+                        function drawChart() {
+                        var data = new google.visualization.DataTable();
+                        data.addColumn('date', 'Дата');
+                        data.addColumn('number', 'Активная потреблённая');
+                        data.addColumn('number', 'Порог мощности');
+                        data.addRows([
+                        """
+                        file.write(s)
+
+                        s = ""
+                        for item in res:
+                            s += f"[new Date({str(item['dt'])[0:4]}, " \
+                                 f"{str(item['dt'])[5:7]}, " \
+                                 f"{str(item['dt'])[8:10]}, " \
+                                 f"{str(item['dt'])[11:13]}, " \
+                                 f"{str(item['dt'])[14:16]}, " \
+                                 f"{str(item['dt'])[17:19]}), " \
+                                 f"{item['activePowerConsumed'] * self.counter_transform}, " \
+                                 f"{self.counter_top}], "
+                        file.write(s)
+
+                        s = """
+                        ]);
+
+                        var chart = new google.visualization.AnnotationChart(document.getElementById('chart_div'));
+
+                        var options = {
+                        displayAnnotations: true
+                        };
+
+                        chart.draw(data, options);
+                        }
+                        </script>
+                        </head>
+
+                        <body>
+                        <div id='chart_div' style='width: 100%; height: 100%;'></div>
                         </body>
                         </html>
                         """
@@ -1045,7 +1161,7 @@ if psch.test_counter(psch.port, psch.counter_identifier):
                                                 days_count)
 
         # HTML-отчёты
-        #ext_cmd = '-reports'
+        ext_cmd = '-reports'
         if ext_cmd == '-reports':
             psch.create_report()
 
