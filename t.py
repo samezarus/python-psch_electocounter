@@ -130,6 +130,9 @@ def get_crc(s):
 
     if len(s_hex) == 5:
         result = f'{s_hex[3]}{s_hex[4]}0{s_hex[2]}'
+    
+    if len(s_hex) == 4:
+        result = f'{s_hex[2]}{s_hex[3]}00'
 
     return result
 
